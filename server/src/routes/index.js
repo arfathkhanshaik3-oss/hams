@@ -1,0 +1,22 @@
+import { Router } from 'express';
+import { adminRouter, dashboardRouter, notificationRouter, reportRouter, settingsRouter } from './misc.js';
+import { appointmentRouter } from './appointments.js';
+import { authRouter, profileRouter } from './auth.js';
+import { doctorRouter, specializationRouter } from './doctors.js';
+import { patientRouter } from './patients.js';
+import { queueRouter } from './queue.js';
+
+export const apiRouter = Router();
+apiRouter.get('/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
+apiRouter.use('/auth', authRouter);
+apiRouter.use('/profile', profileRouter);
+apiRouter.use('/specializations', specializationRouter);
+apiRouter.use('/doctors', doctorRouter);
+apiRouter.use('/appointments', appointmentRouter);
+apiRouter.use('/queue', queueRouter);
+apiRouter.use('/patients', patientRouter);
+apiRouter.use('/notifications', notificationRouter);
+apiRouter.use('/dashboard', dashboardRouter);
+apiRouter.use('/reports', reportRouter);
+apiRouter.use('/settings', settingsRouter);
+apiRouter.use('/admin', adminRouter);

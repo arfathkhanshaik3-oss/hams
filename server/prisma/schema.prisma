@@ -1,0 +1,249 @@
+// Healthcare Appointment & Queue Management System - database schema
+// NOTE: partial unique indexes and CHECK constraints cannot be expressed in this
+// file. They live in prisma/constraints.sql and are appended to the first
+// migration automatically by `npm run db:init`.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  PATIENT
+  DOCTOR
+  RECEPTIONIST
+  ADMIN
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+enum AppointmentStatus {
+  BOOKED
+  CONFIRMED
+  CHECKED_IN
+  WAITING
+  CALLED
+  IN_CONSULTATION
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum AppointmentType {
+  ONLINE
+  WALK_IN
+  STAFF_BOOKED
+}
+
+enum NotificationType {
+  INFO
+  APPOINTMENT
+  QUEUE
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  fullName     String
+  phone        String?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  patientProfile PatientProfile?
+  doctorProfile  DoctorProfile?
+  notifications  Notification[]
+  auditLogs      AuditLog[]
+
+  @@index([role])
+  @@index([fullName])
+}
+
+model PatientProfile {
+  id               String    @id @default(uuid())
+  userId           String    @unique
+  dateOfBirth      DateTime? @db.Date
+  gender           Gender?
+  address          String?
+  emergencyContact String?
+  createdByStaff   Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointments Appointment[]
+}
+
+model Specialization {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  doctors DoctorProfile[]
+}
+
+model DoctorProfile {
+  id                  String   @id @default(uuid())
+  userId              String   @unique
+  specializationId    String
+  consultationFee     Decimal  @db.Decimal(10, 2)
+  consultationMinutes Int      @default(15)
+  experienceYears     Int      @default(0)
+  qualification       String?
+  bio                 String?
+  room                String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  specialization Specialization @relation(fields: [specializationId], references: [id], onDelete: Restrict)
+  schedules      DoctorSchedule[]
+  leaves         DoctorLeave[]
+  appointments   Appointment[]
+  queueEntries   QueueEntry[]
+
+  @@index([specializationId])
+}
+
+model DoctorSchedule {
+  id          String   @id @default(uuid())
+  doctorId    String
+  weekday     Int // 0 = Sunday ... 6 = Saturday
+  startTime   String // "HH:mm" in clinic time zone
+  endTime     String // "HH:mm"
+  slotMinutes Int      @default(15)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  doctor DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, weekday, startTime])
+  @@index([doctorId, weekday])
+}
+
+model DoctorLeave {
+  id        String   @id @default(uuid())
+  doctorId  String
+  startDate DateTime @db.Date
+  endDate   DateTime @db.Date
+  reason    String?
+  createdAt DateTime @default(now())
+
+  doctor DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@index([doctorId, startDate, endDate])
+}
+
+model Appointment {
+  id              String            @id @default(uuid())
+  reference       String            @unique
+  doctorId        String
+  patientId       String
+  startsAt        DateTime
+  endsAt          DateTime
+  appointmentDate DateTime          @db.Date // clinic-local calendar date of startsAt
+  status          AppointmentStatus @default(BOOKED)
+  type            AppointmentType   @default(ONLINE)
+  reasonForVisit  String?
+  cancelReason    String?
+  cancelledById   String?
+  bookedById      String?
+  rescheduleCount Int               @default(0)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  doctor     DoctorProfile  @relation(fields: [doctorId], references: [id], onDelete: Restrict)
+  patient    PatientProfile @relation(fields: [patientId], references: [id], onDelete: Restrict)
+  queueEntry QueueEntry?
+  notifications Notification[]
+
+  @@index([doctorId, startsAt])
+  @@index([patientId, startsAt])
+  @@index([appointmentDate, status])
+  @@index([status])
+}
+
+model QueueEntry {
+  id            String    @id @default(uuid())
+  appointmentId String    @unique
+  doctorId      String
+  queueDate     DateTime  @db.Date
+  queueNumber   Int
+  sortKey       DateTime // calling order among present patients
+  skipCount     Int       @default(0)
+  isLate        Boolean   @default(false)
+  checkedInAt   DateTime?
+  calledAt      DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  appointment Appointment   @relation(fields: [appointmentId], references: [id], onDelete: Cascade)
+  doctor      DoctorProfile @relation(fields: [doctorId], references: [id], onDelete: Cascade)
+
+  @@unique([doctorId, queueDate, queueNumber])
+  @@index([doctorId, queueDate, sortKey])
+}
+
+model ClinicSettings {
+  id                      Int      @id @default(1)
+  clinicName              String   @default("City Care Clinic")
+  opensAt                 String   @default("08:00")
+  closesAt                String   @default("20:00")
+  timeZone                String   @default("Asia/Kolkata")
+  closedWeekdays          Int[]    @default([0])
+  cancellationCutoffHours Int      @default(2)
+  lateGraceMinutes        Int      @default(15)
+  noShowAfterMinutes      Int      @default(30)
+  maxAdvanceBookingDays   Int      @default(30)
+  maxDailyWalkIns         Int      @default(20)
+  maxReschedules          Int      @default(2)
+  updatedAt               DateTime @updatedAt
+}
+
+model Notification {
+  id            String           @id @default(uuid())
+  userId        String
+  appointmentId String?
+  title         String
+  message       String
+  type          NotificationType @default(INFO)
+  readAt        DateTime?
+  createdAt     DateTime         @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  appointment Appointment? @relation(fields: [appointmentId], references: [id], onDelete: SetNull)
+
+  @@index([userId, readAt])
+  @@index([userId, createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String?
+  details    Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([actorId])
+  @@index([entityType, entityId])
+}
